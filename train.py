@@ -23,7 +23,7 @@ import core.metrics as Metrics
 import random
 
 
-def init_dist(backend='nccl', **kwargs):
+def init_dist(backend='nccl', **kwargs):             ##分布式训练初始化
     """initialization for distributed training"""
     if mp.get_start_method(allow_none=True) != 'spawn':
         mp.set_start_method('spawn')
@@ -38,7 +38,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, help='Path to option YMAL file.',
                             default='./config/lolv1.yml') # 
-    parser.add_argument('--launcher', choices=['none', 'pytorch'], default='none',
+    parser.add_argument('--launcher', choices=['none', 'pytorch'], default='none',  #--launcher：用于分布式训练，pytorch 为多进程启动方式，none 表示单机单卡训练。
                         help='job launcher')
     parser.add_argument('--local_rank', type=int, default=0)
 
@@ -53,21 +53,24 @@ def main():
 
     # parse configs
     args = parser.parse_args()
-    opt = Logger.parse(args)
+    opt = Logger.parse(args) #解析json文件
     # Convert to NoneDict, which return None for missing key.
     opt = Logger.dict_to_nonedict(opt)
-    opt_dataset = option.parse(args.dataset, is_train=True)
+    opt_dataset = option.parse(args.dataset, is_train=True) ##解析train的yml文件
 
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0' #指定可见GPU为0
 
-    if args.uncertainty:
+    if args.uncertainty: ##是否进行不确定训练
         opt['uncertainty_train'] = True
     else:
         opt['uncertainty_train'] = False
 
     #### distributed training settings
     #### distributed training settings
+    # 如果 launcher 为 none，关闭分布式训练。
+    # 如果是分布式训练，使用 torch.distributed 初始化通信环境。
+    # 获取当前进程的 rank 和总进程数 world_size。
     if args.launcher == 'none':  # disabled distributed training
         opt['dist'] = False
         rank = -1
@@ -84,7 +87,7 @@ def main():
         device = torch.device("cuda", rank)
 
 
-    #### mkdir and loggers
+    #### mkdir and loggers  配置日志输出格式
     if rank <= 0:  # normal training (rank -1) OR distributed training (rank 0)
 
         # config loggers. Before it, the log will not work
@@ -122,7 +125,7 @@ def main():
     # convert to NoneDict, which returns None for missing keys
     opt = option.dict_to_nonedict(opt)
 
-    #### random seed
+    #### random seed  设置随机种子
     seed = opt['seed']
     if seed is None:
         seed = random.randint(1, 10000)
@@ -248,13 +251,14 @@ def main():
                     # Similar to LLFlow, 
                     # we follow a similar way of 'Kind' to finetune the overall brightness as illustrated 
                     # in Line 73 (https://github.com/zhangyhuaee/KinD/blob/master/evaluate_LOLdataset.py).
-
-                    gt_img = gt_img / 255.
-                    normal_img = normal_img / 255.
-
+                   
+                    ####GT mean矫正操作！！！！！！
+                    gt_img = gt_img / 255. ##gt
+                    normal_img = normal_img / 255. ##模型输出
+                    #计算平均灰度值
                     mean_gray_out = cv2.cvtColor(normal_img.astype(np.float32), cv2.COLOR_BGR2GRAY).mean()
                     mean_gray_gt = cv2.cvtColor(gt_img.astype(np.float32), cv2.COLOR_BGR2GRAY).mean()
-                    normal_img_adjust = np.clip(normal_img * (mean_gray_gt / mean_gray_out), 0, 1)
+                    normal_img_adjust = np.clip(normal_img * (mean_gray_gt / mean_gray_out), 0, 1) ##得到矫正值
 
                     normal_img = (normal_img_adjust * 255).astype(np.uint8)
                     gt_img = (gt_img * 255).astype(np.uint8)
