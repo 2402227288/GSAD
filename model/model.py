@@ -14,17 +14,17 @@ class DDPM(BaseModel):
     def __init__(self, opt):
         super(DDPM, self).__init__(opt)
 
-        if opt['dist']:
+        if opt['dist']: ## 如果dist为true启用分布式训练
             self.local_rank = torch.distributed.get_rank()
             torch.cuda.set_device(self.local_rank)
             device = torch.device("cuda", self.local_rank)
         # define network and load pretrained models
-        self.netG = self.set_device(networks.define_G(opt))
+        self.netG = self.set_device(networks.define_G(opt)) # netG启用不确定性训练，netG应该是只有主模型训练
         if opt['dist']:
             self.netG.to(device)
        
-        # self.netG.to(device)
-        if not opt['uncertainty_train']:
+        # self.netG.to(device) 一般都要调用两次，第二次专门为分布式训练设计
+        if not opt['uncertainty_train']: #使用不确定模型指导
             self.netGU = self.set_device(networks.define_G(opt)) # uncertainty model
             if opt['dist']:
                 self.netGU.to(device)
@@ -165,6 +165,8 @@ class DDPM(BaseModel):
                 self.netGU.set_loss(self.device)
 
     def set_new_noise_schedule(self, schedule_opt, schedule_phase='train'):
+        # 该函数用于设置扩散模型（netG 和 netGU）中的噪声调度计划，
+        # 根据指定的 schedule_opt 参数调整模型的噪声分布，以适应不同的训练或测试阶段。
 
         if self.opt['dist']:
             # local_rank = torch.distributed.get_rank()
