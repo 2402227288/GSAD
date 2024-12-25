@@ -56,10 +56,12 @@ def main():
     opt = Logger.parse(args) #解析json文件
     # Convert to NoneDict, which return None for missing key.
     opt = Logger.dict_to_nonedict(opt)
-    opt_dataset = option.parse(args.dataset, is_train=True) ##解析train的yml文件
+    opt_dataset = option.parse(args.dataset, is_train=True) ##解析train的yml文件 args.dataset就是--dataset，这个opt是专门给数据的
 
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = '0' #指定可见GPU为0
+    # os.environ['CUDA_VISIBLE_DEVICES'] = '0' #指定可见GPU为0
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_ids  # 从命令行参数设置可见的GPU
+
 
     if args.uncertainty: ##是否进行不确定训练
         opt['uncertainty_train'] = True
@@ -91,14 +93,14 @@ def main():
     if rank <= 0:  # normal training (rank -1) OR distributed training (rank 0)
 
         # config loggers. Before it, the log will not work
-        util.setup_logger('base', opt['path']['log'], 'train_' + opt['name'], level=logging.INFO,
+        util.setup_logger('base', opt['path']['log'], 'train_' + opt['name'], level=logging.INFO, # base记录train
                           screen=True, tofile=True)
-        util.setup_logger('val', opt['path']['log'], 'val_' + opt['name'], level=logging.INFO,
+        util.setup_logger('val', opt['path']['log'], 'val_' + opt['name'], level=logging.INFO, # val记录val
                           screen=True, tofile=True)
-        logger = logging.getLogger('base')
-        logger.info(option.dict2str(opt))
+        logger = logging.getLogger('base') # 获取base日志
+        logger.info(option.dict2str(opt)) # 将配置文件的字典转化为字符串在日志中记录
 
-        # tensorboard logger
+        # tensorboard logger ，tensorboard没用到
         if opt.get('use_tb_logger', False) and 'debug' not in opt['name']:
             version = float(torch.__version__[0:3])
             if version >= 1.1:  # PyTorch 1.1
@@ -162,13 +164,13 @@ def main():
     n_iter = opt['train']['n_iter']
 
     diffusion.set_new_noise_schedule(
-        opt['model']['beta_schedule'][opt['phase']], schedule_phase=opt['phase'])
+        opt['model']['beta_schedule'][opt['phase']], schedule_phase=opt['phase']) # 噪声调度
 
 
     # training
     logger.info('Start training from epoch: {:d}, iter: {:d}'.format(current_epoch, current_step))
     avg_psnr = 0
-    while current_step < n_iter:
+    while current_step < n_iter: # 以迭代次数计算epoch
         # if opt['dist']:
         #     train_sampler.set_epoch(current_epoch)
 
@@ -176,21 +178,21 @@ def main():
         for _, train_data in enumerate(train_loader):
 
             current_step += 1
-            if current_step > n_iter:
+            if current_step > n_iter: # 终止训练
                 break
 
-            diffusion.feed_data(train_data)
-            diffusion.optimize_parameters()
+            diffusion.feed_data(train_data) # 数据传入设别
+            diffusion.optimize_parameters() # 模型训练集成
             # log
-            if current_step % opt['train']['print_freq'] == 0 and rank <= 0:
-                logs = diffusion.get_current_log()
+            if current_step % opt['train']['print_freq'] == 0 and rank <= 0: # 每隔 print_freq 步输出一次训练日志，只有主进程 (rank <= 0) 执行日志记录。
+                logs = diffusion.get_current_log() # 主要是损失函数值的log
                 message = '<epoch:{:3d}, iter:{:8,d}> '.format(
                     current_epoch, current_step)
-                for k, v in logs.items():
+                for k, v in logs.items():  # logs.items()是一个字典，kv代表对应名称和对应值（损失）
                     message += '{:s}: {:.4e} '.format(k, v)
-                logger.info(message)
+                logger.info(message) # 输出包含迭代次数以及损失值的日志信息，主模型3个loss，不确定性训练1个loss
 
-            if current_step % opt['train']['save_checkpoint_freq'] == 0 and rank <= 0:
+            if current_step % opt['train']['save_checkpoint_freq'] == 0 and rank <= 0: # 保证在主进程上保存模型
                 logger.info('Saving models and training states.')
                 diffusion.save_network(current_epoch, current_step)
 
@@ -211,7 +213,7 @@ def main():
 
                 if opt['dist']:
                     diffusion.netG.module.set_new_noise_schedule(
-                            opt['model']['beta_schedule']['val'], device)
+                            opt['model']['beta_schedule']['val'], device) # 设置噪声调度，从封装中剥离出来
                 else:
                     diffusion.set_new_noise_schedule(
                         opt['model']['beta_schedule']['val'], schedule_phase='val')
@@ -219,13 +221,13 @@ def main():
                 for val_data in val_loader:
 
                     idx += 1
-                    diffusion.feed_data(val_data)
+                    diffusion.feed_data(val_data) #将数据移到device上
                     diffusion.test(continous=False)
 
                     visuals = diffusion.get_current_visuals()
-                    
+                    # HQ恢复图像 GT LQ
                     normal_img = Metrics.tensor2img(visuals['HQ'])
-                    if normal_img.shape[0] != normal_img.shape[1]: # lolv1 and lolv2-real
+                    if normal_img.shape[0] != normal_img.shape[1]: # lolv1 and lolv2-real 检查图像是否是正方形
                         normal_img = normal_img[8:408, 4:604,:]
                     gt_img = Metrics.tensor2img(visuals['GT'])
                     ll_img = Metrics.tensor2img(visuals['LQ'])
@@ -255,8 +257,8 @@ def main():
                     ####GT mean矫正操作！！！！！！
                     gt_img = gt_img / 255. ##gt
                     normal_img = normal_img / 255. ##模型输出
-                    #计算平均灰度值
-                    mean_gray_out = cv2.cvtColor(normal_img.astype(np.float32), cv2.COLOR_BGR2GRAY).mean()
+                    #计算平均灰度值 astype代表转化为这个数据类型
+                    mean_gray_out = cv2.cvtColor(normal_img.astype(np.float32), cv2.COLOR_BGR2GRAY).mean() # 计算灰度图所有像素点的平均值
                     mean_gray_gt = cv2.cvtColor(gt_img.astype(np.float32), cv2.COLOR_BGR2GRAY).mean()
                     normal_img_adjust = np.clip(normal_img * (mean_gray_gt / mean_gray_out), 0, 1) ##得到矫正值
 

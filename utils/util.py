@@ -157,16 +157,23 @@ def set_random_seed(seed):
 
 def setup_logger(logger_name, root, phase, level=logging.INFO, screen=False, tofile=False):
     '''set up logger'''
-    lg = logging.getLogger(logger_name)
+    lg = logging.getLogger(logger_name) # 创建一个名为 logger_name 的日志记录器对象。
+    # 日志格式内容：
+    # %(asctime)s：日志记录的时间。
+    # %(msecs)03d：毫秒（保留 3 位数字）。
+    # %(levelname)s：日志级别（如 INFO、ERROR）。
+    # %(message)s：日志内容。
+    # datefmt：
+    # 定义时间格式，这里使用了 年-月-日 小时:分钟:秒 的格式。
     formatter = logging.Formatter('%(asctime)s.%(msecs)03d - %(levelname)s: %(message)s',
-                                  datefmt='%y-%m-%d %H:%M:%S')
-    lg.setLevel(level)
-    if tofile:
+                                  datefmt='%y-%m-%d %H:%M:%S') # 日志格式
+    lg.setLevel(level) # 设置日志级别
+    if tofile: # 将日志写入文件
         log_file = os.path.join(root, phase + '_{}.log'.format(get_timestamp()))
         fh = logging.FileHandler(log_file, mode='w')
         fh.setFormatter(formatter)
         lg.addHandler(fh)
-    if screen:
+    if screen: # 终端显示
         sh = logging.StreamHandler()
         sh.setFormatter(formatter)
         lg.addHandler(sh)
