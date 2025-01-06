@@ -76,12 +76,17 @@ def main():
     opt = option.dict_to_nonedict(opt)
 
     #### seed
-    seed = opt['seed']
-    if seed is None:
-        seed = random.randint(1, 10000)
+    # seed = opt['seed']
+    # if seed is None:
+    #     seed = random.randint(1, 10000)
+    # if rank <= 0:
+    #     logger.info('Seed: {}'.format(seed))
+    # util.set_random_seed(seed)
+    seed =  1999  # 优先使用配置中的seed，否则使用1999
     if rank <= 0:
         logger.info('Seed: {}'.format(seed))
     util.set_random_seed(seed)
+
 
     torch.backends.cudnn.benchmark = True
     # torch.backends.cudnn.deterministic = True

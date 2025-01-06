@@ -197,7 +197,7 @@ class GaussianDiffusion(nn.Module):
                 if i % sample_inter == 0:
                     ret_img = torch.cat([ret_img, img], dim=0)
         else:
-            x = x_in
+            x = x_in ## 执行这个
             shape = x.shape
             img = torch.randn(shape, device=device)
             ret_img = x
@@ -237,7 +237,7 @@ class GaussianDiffusion(nn.Module):
         img = cv2.applyColorMap(img, cv2.COLORMAP_JET)
         cv2.imwrite(savename,img)
 
-    def predict_start(self, x_t, continuous_sqrt_alpha_cumprod, noise):
+    def predict_start(self, x_t, continuous_sqrt_alpha_cumprod, noise): ## 由x_t直接去噪生成x_0
         return (1. / continuous_sqrt_alpha_cumprod) * x_t - \
             (1. / continuous_sqrt_alpha_cumprod**2 - 1).sqrt() * noise
 
@@ -245,30 +245,30 @@ class GaussianDiffusion(nn.Module):
 
         x_recon = self.predict_start(x, 
                     continuous_sqrt_alpha_cumprod=continuous_sqrt_alpha_cumprod.view(-1, 1, 1, 1), 
-                    noise=noise)
+                    noise=noise)   ## 由预测的噪声生成x_0
 
         if clip_denoised:
-            x_recon.clamp_(-1., 1.)
+            x_recon.clamp_(-1., 1.) ##限制x_0范围
 
-        model_mean, model_log_variance = self.q_posterior(x_start=x_recon, x_t=x, t=t)
+        model_mean, model_log_variance = self.q_posterior(x_start=x_recon, x_t=x, t=t)#q(x_t-1/x_t+x_0),返回后验均值以及后验方差
 
-        noise_z = torch.randn_like(x) if t > 0 else torch.zeros_like(x)
+        noise_z = torch.randn_like(x) if t > 0 else torch.zeros_like(x) ## 生成与x_t形状相同的随机噪声
 
-        return model_mean + noise_z * (0.5 * model_log_variance).exp()       
+        return model_mean + noise_z * (0.5 * model_log_variance).exp()     ## 返回x_t-1   
 
 
     def to_patches(sefl, data, kernel_size):
 
-        patches = nn.Unfold(kernel_size=kernel_size, stride=kernel_size)(torch.mean(data, dim=1, keepdim=True))
+        patches = nn.Unfold(kernel_size=kernel_size, stride=kernel_size)(torch.mean(data, dim=1, keepdim=True)) ## 转为单通道并分割
         patches = patches.transpose(2,1)
 
-        return patches
+        return patches  # (batch_size, num_patches, patch_features) 样本大小、块的数目以及块的像素点数目如8x8
 
 
-    def calcu_kmeans(self, data, num_clusters):
+    def calcu_kmeans(self, data, num_clusters): ## 这里data输入是补丁也即patches
 
-        [b, h, w] = data.shape
-        cluster_ids_all = np.empty([b, h])
+        [b, h, w] = data.shape 
+        cluster_ids_all = np.empty([b, h]) ##初始化用于储存
         cluster_ids_all = torch.from_numpy(cluster_ids_all)
         for i in range(b):
             # cluster_ids, cluster_centers = kmeans(
@@ -291,7 +291,7 @@ class GaussianDiffusion(nn.Module):
             # cluster_ids = torch.from_numpy(cluster_ids).cuda()
 
             # Hierarchical Clustering
-            model = AgglomerativeClustering(n_clusters=num_clusters)
+            model = AgglomerativeClustering(n_clusters=num_clusters)  ##使用高级层次聚类算法
             cluster_ids = model.fit_predict(transform(data[i,:,:].cpu()))
             cluster_ids = torch.from_numpy(cluster_ids).cuda()
 
@@ -308,7 +308,7 @@ class GaussianDiffusion(nn.Module):
             # cluster_ids = km.idx
 
             # print(cluster_ids)
-            cluster_ids_all[i, :] = cluster_ids
+            cluster_ids_all[i, :] = cluster_ids # [batch_size, num_patches] 返回每个批次中每个图像块的聚类类别。
         
         return cluster_ids_all
 
@@ -324,7 +324,7 @@ class GaussianDiffusion(nn.Module):
     def calcu_svd_distance(self, data1, data2, cluster_ids, num_clusters):
 
         [b, h, w] = data1.shape 
-        sv_ab_dis = np.empty([b, num_clusters])
+        sv_ab_dis = np.empty([b, num_clusters]) #初始化存储奇异值距离的数组
         sv_ab_dis = torch.from_numpy(sv_ab_dis)
         for i in range(num_clusters):
 
@@ -338,18 +338,18 @@ class GaussianDiffusion(nn.Module):
                 sv1 = self.calcu_svd(data1_select.cpu())
                 sv2 = self.calcu_svd(data2_select.cpu())
    
-                sv_ab_dis_i = torch.abs(sv1 - sv2)
-                sv_ab_dis[:, i] = torch.sum(sv_ab_dis_i, dim=1)
-        return sv_ab_dis
+                sv_ab_dis_i = torch.abs(sv1 - sv2) # 计算奇异值绝对值差
+                sv_ab_dis[:, i] = torch.sum(sv_ab_dis_i, dim=1) # 对当前样本的奇异值差异求和，得到当前聚类的总差异。
+        return sv_ab_dis # [batch_size, num_clusters]
 
-    def global_aware_losses(self, x_in, uct_model, noise=None):
+    def global_aware_losses(self, x_in, uct_model, noise=None): ## 从这个x_in的位置开始改
 
         x_start = x_in['GT']
         [b, c, h, w] = x_start.shape
 
-        t = np.random.randint(1, self.num_timesteps + 1)
+        t = np.random.randint(1, self.num_timesteps + 1) ##随机选择时间步
 
-        continuous_sqrt_alpha_cumprod = torch.FloatTensor(
+        continuous_sqrt_alpha_cumprod = torch.FloatTensor( ## 随机采样一个根号alfa的连乘积
             np.random.uniform(
                 self.sqrt_alphas_cumprod_prev[t-1],
                 self.sqrt_alphas_cumprod_prev[t],
@@ -359,32 +359,32 @@ class GaussianDiffusion(nn.Module):
         continuous_sqrt_alpha_cumprod = continuous_sqrt_alpha_cumprod.view(
             b, -1)
 
-        noise = default(noise, lambda: torch.randn_like(x_start))
+        noise = default(noise, lambda: torch.randn_like(x_start)) ## 没有噪声就随机生成一个噪声
 
         x_noisy = self.q_sample(
-            x_start=x_start, continuous_sqrt_alpha_cumprod=continuous_sqrt_alpha_cumprod.view(-1, 1, 1, 1), noise=noise)
+            x_start=x_start, continuous_sqrt_alpha_cumprod=continuous_sqrt_alpha_cumprod.view(-1, 1, 1, 1), noise=noise) ## 从x_0直接生成x_t
 
         if not self.conditional:
             x_recon = self.denoise_fn(x_noisy, continuous_sqrt_alpha_cumprod)
         else:
             x_recon, _ = self.denoise_fn(
-                torch.cat([x_in['LQ'], x_noisy], dim=1), continuous_sqrt_alpha_cumprod)
+                torch.cat([x_in['LQ'], x_noisy], dim=1), continuous_sqrt_alpha_cumprod) ## 预测的噪声
             with torch.no_grad():
                 _, Pt = uct_model(
-                    torch.cat([x_in['LQ'], x_noisy], dim=1), continuous_sqrt_alpha_cumprod)
+                    torch.cat([x_in['LQ'], x_noisy], dim=1), continuous_sqrt_alpha_cumprod) ## 训练好的模型生成Pt
 
         # global structure-aware constrain
         x_0 = x_start
-        x_0_patches = self.to_patches(x_0, kernel_size=8) 
+        x_0_patches = self.to_patches(x_0, kernel_size=8)  #  将 Ground Truth 图像分割为 8x8 的图像块
 
         x_t_1 = self.predict_t_minus1(x_noisy, t-1, 
                 continuous_sqrt_alpha_cumprod=continuous_sqrt_alpha_cumprod.view(-1, 1, 1, 1), 
-                noise=x_recon) 
+                noise=x_recon)  ## 由x_t生成x_t-1
         x_t_1_patches = self.to_patches(x_t_1, kernel_size=8)
 
         num_clusters = 6
         cluster_ids = self.calcu_kmeans(x_0_patches, num_clusters=num_clusters)
-        svd_dis = self.calcu_svd_distance(x_0_patches, x_t_1_patches, cluster_ids=cluster_ids, num_clusters=num_clusters)
+        svd_dis = self.calcu_svd_distance(x_0_patches, x_t_1_patches, cluster_ids=cluster_ids, num_clusters=num_clusters) ## 计算x_0 与 x_t-1之间的奇异值距离，以进行约束
 
         b, c, h, w = Pt.shape
         s1 = Pt.view(b, c, -1)
@@ -393,16 +393,16 @@ class GaussianDiffusion(nn.Module):
         pmax = torch.max(s1, dim=-1)
         pmax = pmax[0].unsqueeze(dim=-1).unsqueeze(dim=-1)
 
-        Pt = (Pt - pmin) / (pmax - pmin + 0.000001)
+        Pt = (Pt - pmin) / (pmax - pmin + 0.000001) #对Pt归一化
         Pt = Pt * 0.5 + 0.5
 
-        epsilon_pred = torch.mul(x_recon, Pt)
-        epsilon = torch.mul(noise, Pt)
-        lambda_ = 10
-        loss_pix = self.loss_func(epsilon_pred, epsilon) * lambda_
+        epsilon_pred = torch.mul(x_recon, Pt)  ##预测噪声加权
+        epsilon = torch.mul(noise, Pt) # 真实噪声加权
+        lambda_ = 10 #比例系数设为10
+        loss_pix = self.loss_func(epsilon_pred, epsilon) * lambda_  # 像素级别损失
 
-        kappa = continuous_sqrt_alpha_cumprod**4
-        loss_s = svd_dis.cuda() * kappa 
+        kappa = continuous_sqrt_alpha_cumprod**4 ##自适应因子
+        loss_s = svd_dis.cuda() * kappa  ## Ls 全局结构损失正则化项
 
         # --------------------- perceptual_loss --------------------- #
         # x_0 = x_start

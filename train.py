@@ -22,6 +22,14 @@ import core.logger as Logger
 import core.metrics as Metrics
 import random
 
+import debugpy
+try:
+    # 5678 is the default attach port in the VS Code debug configurations. Unless a host and port are specified, host defaults to 127.0.0.1
+    debugpy.listen(("localhost", 9501))
+    print("Waiting for debugger attach")
+    debugpy.wait_for_client()
+except Exception as e:
+    pass
 
 def init_dist(backend='nccl', **kwargs):             ##分布式训练初始化
     """initialization for distributed training"""
@@ -46,7 +54,7 @@ def main():
                         help='JSON file for configuration')
     parser.add_argument('-p', '--phase', type=str, choices=['train', 'val'],
                         help='Run either train(training) or val(generation)', default='train')
-    parser.add_argument('-gpu', '--gpu_ids', type=str, default="0")
+    parser.add_argument('-gpu', '--gpu_ids', type=str, default="1")
     parser.add_argument('-debug', '-d', action='store_true')
     parser.add_argument('-log_eval', action='store_true')
     parser.add_argument('-uncertainty', action='store_true')
@@ -128,12 +136,16 @@ def main():
     opt = option.dict_to_nonedict(opt)
 
     #### random seed  设置随机种子
-    seed = opt['seed']
-    if seed is None:
-        seed = random.randint(1, 10000)
+    seed =  1999  # 优先使用配置中的seed，否则使用1999
     if rank <= 0:
-        logger.info('Random seed: {}'.format(seed))
+        logger.info('Seed: {}'.format(seed))
     util.set_random_seed(seed)
+    # seed = opt['seed']
+    # if seed is None:
+    #     seed = random.randint(1, 10000)
+    # if rank <= 0:
+    #     logger.info('Random seed: {}'.format(seed))
+    # util.set_random_seed(seed)
 
     torch.backends.cudnn.benchmark = True
     # torch.backends.cudnn.deterministic = True
@@ -181,7 +193,7 @@ def main():
             if current_step > n_iter: # 终止训练
                 break
 
-            diffusion.feed_data(train_data) # 数据传入设别
+            diffusion.feed_data(train_data) # 数据传入设备
             diffusion.optimize_parameters() # 模型训练集成
             # log
             if current_step % opt['train']['print_freq'] == 0 and rank <= 0: # 每隔 print_freq 步输出一次训练日志，只有主进程 (rank <= 0) 执行日志记录。

@@ -104,12 +104,12 @@ class GaussianDiffusion(nn.Module):
             linear_start=schedule_opt['linear_start'],
             linear_end=schedule_opt['linear_end'])
         betas = betas.detach().cpu().numpy() if isinstance( #如果betas为tensor则返回其numpy格式
-            betas, torch.Tensor) else betas
-        alphas = 1. - betas #计算 Alpha 序列
-        alphas_cumprod = np.cumprod(alphas, axis=0) #Alpha的累积乘积
-        alphas_cumprod_prev = np.append(1., alphas_cumprod[:-1])#前一个Alpha的累积乘积
+            betas, torch.Tensor) else betas # 转化为numpy数组
+        alphas = 1. - betas #计算 Alpha 序列 [500,]
+        alphas_cumprod = np.cumprod(alphas, axis=0) #Alpha的累积乘积[500,]
+        alphas_cumprod_prev = np.append(1., alphas_cumprod[:-1])#前一个Alpha的累积乘积 [500,]
         self.sqrt_alphas_cumprod_prev = np.sqrt(
-            np.append(1., alphas_cumprod)) #这么写确实没错，但维度会到T+1
+            np.append(1., alphas_cumprod)) #这么写确实没错，但维度会到T+1 [501,]
 
         timesteps, = betas.shape
         self.num_timesteps = int(timesteps)
@@ -158,9 +158,9 @@ class GaussianDiffusion(nn.Module):
         batch_size = x.shape[0]
         noise_level = torch.FloatTensor(
             [self.sqrt_alphas_cumprod_prev[t+1]]).repeat(batch_size, 1).to(x.device)#把单个噪声等级值扩展成一个批次大小的张量，使得批次中的每个样本都能获得相同的噪声等级信息。
-        if condition_x is not None: ##文章没用
+        if condition_x is not None: ## condition_x为低光照图像
             x_recon = self.predict_start_from_noise(
-                x, t=t, noise=self.denoise_fn(torch.cat([condition_x, x], dim=1), noise_level)[0])
+                x, t=t, noise=self.denoise_fn(torch.cat([condition_x, x], dim=1), noise_level)[0]) ## 将低光图像+噪声+噪声等级输入unet网络就可以得到noise，从而预测x_recon也即恢复图像也即x_0
         else:
             x_recon = self.predict_start_from_noise(
                 x, t=t, noise=self.denoise_fn(x, noise_level)) # denoise_fn为噪声预测网络，文中也即Unet，从噪声中恢复x_0
@@ -173,7 +173,7 @@ class GaussianDiffusion(nn.Module):
         return model_mean, posterior_log_variance ##得到后验均值u~和beta~
 
     @torch.no_grad()
-    def p_sample(self, x, t, clip_denoised=True, condition_x=None):
+    def p_sample(self, x, t, clip_denoised=True, condition_x=None):   #单步逆扩散过程，由x_t得到x_t-1
         model_mean, model_log_variance = self.p_mean_variance(
             x=x, t=t, clip_denoised=clip_denoised, condition_x=condition_x)
         noise = torch.randn_like(x) if t > 0 else torch.zeros_like(x)
@@ -182,22 +182,22 @@ class GaussianDiffusion(nn.Module):
         return model_mean + noise * (0.5 * model_log_variance).exp()
 
     @torch.no_grad()
-    def p_sample_loop(self, x_in, continous=False):
+    def p_sample_loop(self, x_in, continous=False): # 从纯噪声​x_T逐步采样到清晰图像x_0的完整过程
         device = self.betas.device
-        sample_inter = (1 | (self.num_timesteps//10))
+        sample_inter = (1 | (self.num_timesteps//10))# # 设置采样间隔，通常是每10次迭代保存一次图像
         if not self.conditional:
             shape = x_in
             img = torch.randn(shape, device=device)
             ret_img = img
-            for i in tqdm(reversed(range(0, self.num_timesteps)), desc='sampling loop time step', total=self.num_timesteps):
+            for i in tqdm(reversed(range(0, self.num_timesteps)), desc='sampling loop time step', total=self.num_timesteps):## 可以在终端看到逐步的去噪过程
                 img = self.p_sample(img, i)
                 if i % sample_inter == 0:
                     ret_img = torch.cat([ret_img, img], dim=0)
         else:
-            x = x_in
+            x = x_in   ## 执行这个，在test模块，我们可以看到此时x_in是属于LQ图像也即低光图像
             shape = x.shape
-            img = torch.randn(shape, device=device)
-            ret_img = x
+            img = torch.randn(shape, device=device) #随机生成一个噪声
+            ret_img = x #用于储存恢复的图像
             for i in tqdm(reversed(range(0, self.num_timesteps)), desc='sampling loop time step', total=self.num_timesteps):
                 img = self.p_sample(img, i, condition_x=x)
                 if i % sample_inter == 0:
@@ -205,7 +205,7 @@ class GaussianDiffusion(nn.Module):
         if continous:
             return ret_img
         else:
-            return ret_img[-1]
+            return ret_img[-1] ##默认返回最后一个图像
 
     @torch.no_grad()
     def sample(self, batch_size=1, continous=False):
@@ -227,20 +227,20 @@ class GaussianDiffusion(nn.Module):
         )
 
 
-    def draw_features(self, x, savename):
-        img = x[0, 0, :, :]
+    def draw_features(self, x, savename): #将特征图（Feature Map）进行可视化
+        img = x[0, 0, :, :]#只选取第一个样本的第一个通道
         pmin = np.min(img)
         pmax = np.max(img)
-        img = ((img - pmin) / (pmax - pmin + 0.000001)) * 255  
-        img = img.astype(np.uint8)  
-        img = cv2.applyColorMap(img, cv2.COLORMAP_JET)
-        cv2.imwrite(savename,img)
-
-    def predict_start(self, x_t, continuous_sqrt_alpha_cumprod, noise):
+        img = ((img - pmin) / (pmax - pmin + 0.000001)) * 255   #归一化
+        img = img.astype(np.uint8)   #编码类型
+        img = cv2.applyColorMap(img, cv2.COLORMAP_JET) #生成彩色图片
+        cv2.imwrite(savename,img) #保存为savename
+ 
+    def predict_start(self, x_t, continuous_sqrt_alpha_cumprod, noise):  ##没用到
         return (1. / continuous_sqrt_alpha_cumprod) * x_t - \
             (1. / continuous_sqrt_alpha_cumprod**2 - 1).sqrt() * noise
 
-    def predict_t_minus1(self, x, t, continuous_sqrt_alpha_cumprod, noise, clip_denoised=True):
+    def predict_t_minus1(self, x, t, continuous_sqrt_alpha_cumprod, noise, clip_denoised=True): ##没用到
 
         x_recon = self.predict_start(x, 
                     continuous_sqrt_alpha_cumprod=continuous_sqrt_alpha_cumprod.view(-1, 1, 1, 1), 
@@ -256,7 +256,7 @@ class GaussianDiffusion(nn.Module):
         return model_mean + noise_z * (0.5 * model_log_variance).exp()       
 
 
-    def to_patches(sefl, data, kernel_size):
+    def to_patches(sefl, data, kernel_size): #将输入的 4D 图像张量 分割成固定大小的非重叠小块（patches）
 
         patches = nn.Unfold(kernel_size=kernel_size, stride=kernel_size)(torch.mean(data, dim=1, keepdim=True)) # [8, 64, 400]
         patches = patches.transpose(2,1) # [8, 400, 64]
@@ -264,7 +264,7 @@ class GaussianDiffusion(nn.Module):
         return patches
 
 
-    def calcu_kmeans(self, data, num_clusters):
+    def calcu_kmeans(self, data, num_clusters): #将小块data聚类成num_clusters类别
 
         [b, h, w] = data.shape
         cluster_ids_all = np.empty([b, h])
@@ -274,13 +274,13 @@ class GaussianDiffusion(nn.Module):
             #     X=data[i,:,:], num_clusters=num_clusters, distance='euclidean', device=torch.device('cuda:0')
             # )
             km = kmeans_core(k=num_clusters,data_array=data[i,:,:].cpu().numpy(),batch_size=400,epochs=1000)
-            km.run()
-            cluster_ids = km.idx
-            cluster_ids_all[i, :] = cluster_ids
-        
-        return cluster_ids_all
+            km.run() # 执行聚类
+            cluster_ids = km.idx #  获取聚类结果（每个图像块的类别索引）
+            cluster_ids_all[i, :] = cluster_ids  # 存储当前批次的聚类结果
 
-    def calcu_svd(self, data):
+        return cluster_ids_all # [batch_size, num_patches] 返回每个批次中每个图像块的聚类类别。
+
+    def calcu_svd(self, data): #矩阵奇异值分解，返回奇异值
 
         u, sv, v = torch.svd(data)
         #sv_F2 = torch.norm(sv, dim=1)
@@ -289,9 +289,9 @@ class GaussianDiffusion(nn.Module):
         #normalized_sv = sv / sv_F2
         return sv
 
-    def calcu_svd_distance(self, data1, data2, cluster_ids, num_clusters):
+    def calcu_svd_distance(self, data1, data2, cluster_ids, num_clusters): ## 计算奇异值之间的距离
 
-        [b, h, w] = data1.shape # [8, 400, 64]
+        [b, h, w] = data1.shape # [8, 400, 64] 
         sv_ab_dis = np.empty([b, num_clusters])
         sv_ab_dis = torch.from_numpy(sv_ab_dis)
         for i in range(num_clusters):
@@ -310,37 +310,37 @@ class GaussianDiffusion(nn.Module):
                 sv_ab_dis[:, i] = torch.sum(sv_ab_dis_i, dim=1)
         return sv_ab_dis
 
-    def uncertainty_train(self, x_in, noise=None):
-
-        x_start = x_in['GT']
+    def uncertainty_train(self, x_in, noise=None):  ## 从这个x_in开始改
+ 
+        x_start = x_in['GT'] ##输入的GT图像，定义为x_0
         [b, c, h, w] = x_start.shape
-        t = np.random.randint(1, self.num_timesteps + 1)
+        t = np.random.randint(1, self.num_timesteps + 1) # t 是从 1 到 num_timesteps 中的一个随机整数
         continuous_sqrt_alpha_cumprod = torch.FloatTensor(
             np.random.uniform(
                 self.sqrt_alphas_cumprod_prev[t-1],
-                self.sqrt_alphas_cumprod_prev[t],
+                self.sqrt_alphas_cumprod_prev[t],  # 随机采样根号alfa的连乘法
                 size=b
             )
         ).to(x_start.device)
         continuous_sqrt_alpha_cumprod = continuous_sqrt_alpha_cumprod.view(
-            b, -1)
+            b, -1) # [batch_size, 1]
 
 
         noise = default(noise, lambda: torch.randn_like(x_start))
         x_noisy = self.q_sample(
-            x_start=x_start, continuous_sqrt_alpha_cumprod=continuous_sqrt_alpha_cumprod.view(-1, 1, 1, 1), noise=noise)
+            x_start=x_start, continuous_sqrt_alpha_cumprod=continuous_sqrt_alpha_cumprod.view(-1, 1, 1, 1), noise=noise) #模拟从x_0添加噪声到x_t
 
         if not self.conditional:
             x_recon = self.denoise_fn(x_noisy, continuous_sqrt_alpha_cumprod)
         else:
             x_recon = self.denoise_fn(
-                torch.cat([x_in['LQ'], x_noisy], dim=1), continuous_sqrt_alpha_cumprod)
+                torch.cat([x_in['LQ'], x_noisy], dim=1), continuous_sqrt_alpha_cumprod) ## 对去噪网络输入x_t与低光图像LQ和alfa连乘积
 
         # for uncertainty training 
-        Pt = x_recon[1]
-        epsilon_pred = torch.mul(x_recon[0], torch.exp(-Pt))
-        epsilon = torch.mul(noise, torch.exp(-Pt))
-        loss = self.loss_func(epsilon_pred, epsilon) + 2 * torch.mean(Pt)
+        Pt = x_recon[1] ##得到不确定性Pt，x_recon包含预测的噪声+预测的Pt
+        epsilon_pred = torch.mul(x_recon[0], torch.exp(-Pt)) # 加权的噪声预测
+        epsilon = torch.mul(noise, torch.exp(-Pt)) # 加权的真实噪声预测
+        loss = self.loss_func(epsilon_pred, epsilon) + 2 * torch.mean(Pt) ## 文中Lu，公式5
 
         return loss
 
